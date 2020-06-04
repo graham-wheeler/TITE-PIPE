@@ -1,2 +1,307 @@
 # TITE-PIPE
-R Code used for Time-to-Event adaptation of PIPE design for phase I trials of drug combinations
+R Code used for Time-to-Event adaptation of PIPE design for phase I trials of drug combinations.
+
+The code and README files are also available from the JRSS Series C webpage for supplementary material to published articles; see https://rss.onlinelibrary.wiley.com/hub/journal/14679876/series-c-datasets/68_2.
+
+#########################################################################
+# A Bayesian model-free approach to combination therapy phase I trials using censored time-to-toxicity data
+# G. M. Wheeler, M. J. Sweeting and A. P. Mander
+# Appl. Statist., 68 (2019), 309 -- 329
+#########################################################################
+
+# These functions use R Software. To use, please install R.
+# For an example of how to run tite.pipe.design and print/plot results,
+# please see the accompanying R code file.
+
+# NB:
+# To simulate PIPE, set wait.to.enter = TRUE & min.patient.type = complete.dose
+# To simulate TITE-PIPE-C, set wait.to.enter = FALSE & min.patient.type = complete.dose
+# To simulate TITE-PIPE-O, set wait.to.enter = FALSE & min.patient.type = on.dose
+
+
+########################################
+# Functions and their inputs & outputs #
+########################################
+
+tite.pipe.design - simulate trials under the PIPE and TITE-PIPE design
+Arguments:
+# N = Maximum sample size
+# nsim = number of trials to simulate
+# c = cohort size (default is 1)
+# theta = Target Toxicity Level (TTL)
+# pi = For J levels of drug A and K levels of drug B, a J-by-K matrix of true DLT probabilities
+# prior.med = J-by-K matrix of prior median DLT probabilities at each dose combination
+# prior.ss = J-by-K matrix with prior effective sample sizes for each dose combination
+# strategy = dose-escalation strategy as used in R package "pipe.design": "ss" = sample size, "ss-random" = weighted randomisation
+# admis = choice of what doses can be considered: "adjacent" or "closest" - adjacent includes doses next to MTC but may be dominated by another safe dose
+# constraint = dose-skipping constraints: "neighbouring" (doses around current), "neighbouring-nodiag" (doses around current, but no diagonal escalation), "no.dose.skip" (doses within one dose of any previously tested), or "no.dose.skip-nodiag" (doses within one dose of any previously tested, excluding diagonal escalation)
+# epsilon = cutoff for identifying admissible doses: doses not considered admissible if P(dose > MTC)>epsilon
+# a = first hyperparameter of beta priors on DLT risk per dose combination; default is NULL and can be computed if prior.med and prior.ss are specified
+# b = second hyperparameter of beta priors on DLT risk per dose combination; default is NULL and can be computed if prior.med and prior.ss are specified
+# alternate = logical: if TRUE, design always de-escalate if above the MTD and escalate if below? (subject to other constraints)
+# upper.tox.constraint = default NULL - number between 0 and 1, so MTC for this number represents upper tox boundary
+# stop = alternative stopping rule - stop trial if P(lowest dose > theta)>stop. Default is NULL.
+# non.admissible = logical matrix for dose combinations stating which ones are permanently barred from/included in trial
+# seed = logical: random seed number set within simulations?
+# Tmax = follow-up time interval length
+# lambda = rate of arrival times (average of one patient arriving every 1/lambda time units, i.e. lambda patients per time unit)
+# first.full.eval = number of patients that have to have completed follow-up before new patients can enter trial
+# wait.to.enter = do all patients have to wait until follow-up has been completed on patients? To simulate PIPE design, set to be TRUE, otherwise, set to be FALSE
+# failure.type = "uniform", "weibull", or "pareto": mechanism to generate failure times
+# weight.type = "uniform", or "adaptive": weight mechanism
+# min.cohort.size = what is the minimum number of people that must be dosed at a cohort before another cohort can be considered?
+# min.patient.type = either "complete.dose" (min.cohort.size patients must have completed current dose combination before further patients can be recruited into study) or "on.dose" (min.cohort.size patients must be on current dose combination before further patients can be recruited into study)
+Values:
+# a = first hyperparameter of beta priors on DLT risk per dose combination
+# admis.list = reported for error-checking; standard output is "list()"
+# arrival.list = list of length "S" with simulated patient entry times for each trial (includes delays - see "original.arrival.list" for times generated from Poisson process governed by lambda)
+# b = second hyperparameter of beta priors on DLT risk per dose combination
+# cdfs = reported for error-checking; standard output is "list()"
+# consider.stop = reported for error-checking; standard output is "list()"
+# dlts = Empiric DLT rate per simulation
+# dom.list = reported for error-checking; standard output is "list()"
+# exp = J-by-K matrix with proportion of patients given each combination over all simulations
+# failure.list = list of length S: each item is a list with length equal to the number of patients in that trial and contains:
+##	y.i - the DLT outcome of that patient (1 = DLT, 0 otherwise)
+##	time.i - the time at which a patient had a DLT (if they did) and is a large number (>= 1000) if they did not
+# h.lik.list = reported for error-checking; standard output is "list()"
+# mat.lik.list = reported for error-checking; standard output is "list()"
+# mat.list = reported for error-checking; standard output is "list()"
+# means = reported for error-checking; standard output is "list()"
+# min.patient.type = argument given for "min.patient.type"
+# n.list = reported for error-checking; standard output is "list()"
+# n.rpII = vector of length S; shows the number of MTDCs recommended per trial
+# n.sim = list of length S; each item is a J-by-K matrix showing the number of patients given each dose combination per trial
+# no.not.treated = Number of patients not treated (due to early termination) across all trials
+# original.arrival.list = list of length S showing original arrival times generated for patients per trial; due to constraints on patient entry, these are modified appropriately to give "arrival.list"
+# p.rec = J-by-K matrix showing probability of recommending each combination as MTDC averaged across all trials
+# pi = argument given for "pi"
+# pi.theta.list = reported for error-checking; standard output is "list()"
+# r.list = reported for error-checking; standard output is "list()"
+# r.sim = list of length S; each item is a J-by-K matrix showing the number of patients who had a DLT at each dose combination per trial
+# rec = J-by-K matrix numbering how many times each dose is recommended as an MTDC
+# rec.i.sim = array of dimension (S, N, 1) giving dose of drug A allocated to each patient
+# rec.j.sim = array of dimension (S, N, 1) giving dose of drug B allocated to each patient
+# rpII.list = list of length S showing trial-specific MTDCs
+# theta = argument given for "theta"
+# trial.duration.list = list of length S showing total trial duration per trial
+# uppermat.list = reported for error-checking; standard output is "list()"
+# uppermat2.list = reported for error-checking; standard output is "list()"
+# v.lik.list = reported for error-checking; standard output is "list()"
+# wait.to.enter = argument given for "wait.to.enter"
+# weights.list = list of length S; each element contains a (N+1)x(N+1) matrix that shows at each patient entry time, the DLT weights allocated to every patient in the trial.
+
+################
+# Dependencies #
+################
+
+fail.ind.fn - Indicator function for failures; returns failure time if DLT status = 1 and 0 otherwise
+Arguments
+# failure = list object of length "n" (n = number of patients treated so far), with each element containing "time.i" (failure time) and "y.i" (failure status)
+Values
+# Output is vector of length "n" with either 0 or failure time for each element/patient
+
+
+arrivals.fn - updates arrival times for given vector of patient arrivals
+Arguments
+# arrivals = vector of arrival times
+# Tmax = Maximum length of DLT window
+Values
+# Output is vector of updated arrival times (original times plus Tmax)
+
+
+interarrival.time.fn - Generates interarrival times under a Poisson process to determine original trial entry times 
+Arguments
+# n = Number of interarrival times to generate
+# rate = interarrival rate (lambda from tite.pipe.design)
+# Tmax = Maximum length of DLT window
+Values
+# X = interarrival times
+# S = original arrival times
+# S.start = same as S with end time included also
+
+
+monotonic.matrices - for J-by-K dose-toxicity surface, produces all possible matrices that satisfy marginal monotonicity constraints
+Arguments
+# I = number of dose levels for drug A
+# J = number of dose levels for drug B
+Values
+# matrices = list of length "choose(I+J,J)" matrices that satisfy the monotonicity constraint
+
+
+beta.med - function to determine values of "a" and "b" based on "prior.med" and "prior.ss"
+Arguments
+# prior.med = J-by-K matrix of prior median DLT probabilities at each dose combination
+# prior.ss = J-by-K matrix with prior effective sample sizes for each dose combination
+Values
+# a = first hyperparameter of beta priors on DLT risk per dose combination
+# b = second hyperparameter of beta priors on DLT risk per dose combination
+
+
+mtc.create - Function to calculate the MTC conditional on trial data and escalation constraints
+Arguments
+# matrices = output from "monotonic.matrices"
+# p = matrix of tail probabilities at "theta" based on priors ("a", "b") and trial data
+# constraint = "constraint" argument of tite.pipe.design
+# pconstraint = matrix of tail probabilities at "uppertox.constraint" based on priors ("a", "b") and trial data if uppertox.constraint is specified
+# epsilon = "epsilon" argument of tite.pipe.design
+# admis = "admis" argument of tite.pipe.design
+# rec.i = dose levels of drug A given to patients in trial so far
+# rec.j = dose levels of drug B given to patients in trial so far
+# n = matrix of number of patients allocated to each dose combination
+# contour.select = "sim" by default (see tite.pipe.design function)
+# hsegments = computed in tite.pipe.design - used in calculating "median" MTD contour, not modal contour 
+# vsegments = computed in tite.pipe.design - used in calculating "median" MTD contour, not modal contour 
+# S = Number of simulations that will be conducted
+# non.admissible = "non.admissible" argument for tite.pipe.design
+# reweight = logical: do we reweight the likelihoods of the MTD contours? Default is FALSE.
+# R = parameters for reweighting (only used if reweight = TRUE)
+# P = parameters for reweighting (only used if reweight = TRUE)
+Values
+# dominant = matrix of "dominant" dose combinations given escalation/dosing constraints
+# admissible = matrix of "admissible" dose combinations given escalation/dosing constraints
+# mat = either mat.mode or mat.med, depending on choice of modal or median MTD Contour
+# mat.mode = matrix showing most likely (modal) MTD contour
+# mat.med = matrix showing median MTD contour
+# matupper = binary matrix showing the most likely contour that separates excessively toxic doses from safe doses (if pconstraint is not NULL)
+# matupper2 = logical matrix showing which doses have a weighted probability of being above the MTD contour greater than "epsilon"
+# weight.pMTC = weighted probability of dose combination being above the MTD contour (only computed if epsilon!=NULL)
+# mat.lik = equal to weight.pMTC if epsilon!=NULL
+# h.lik = only used when contour.select!="sim"
+# v.lik = only used when contour.select!="sim"
+
+
+w.median - function used by "mtc.create"
+Arguments
+# x = vector
+# w = weights of elements in vector "x"
+Values
+# Output is median of "x" as weighted by "w"
+
+
+closest - function used by "mtc.create"
+Arguments
+# mat = binary matrix showing combinations that are below or above a particular MTC
+Values
+# dominant = logical matrix that shows which combinations are closest to the MTC defined by "mat"
+
+
+mtc - Computes next dose based on output of "mtc.create" and escalation constraints
+Arguments
+# dominant = "dominant" matrix from "mtc.create"
+# admissible = "admissible" matrix from "mtc.create"
+# strategy = "strategy" argument from tite.pipe.design
+# rec.i = dose levels of drug A given to patients in trial so far
+# rec.j = dose levels of drug B given to patients in trial so far
+# pi.theta = Effective sample size (prior and in-trial) at each combination
+# mat = "mat" matrix from "mtc.create"
+# p = matrix of tail probabilities at "theta" based on priors ("a", "b") and trial data
+# alternate = "alternate" argument from tite.pipe.design
+# psmooth = "mat.lik" output from mtc.create
+Values
+# rec.i = recommended level of drug A for next patient
+# rec.j = recommended level of drug B for next patient
+
+
+failure.time.fn - generate failure times
+Arguments
+# trueprob = true probability of DLT
+# type = (failure.type specified in tite.pipe.design) "uniform", "weibull", or "pareto": mechanism to generate failure times
+# Tmax = Maximum length of DLT window
+# t.i0 = arrival times
+Values
+# y.i = failure outcome (either 1 if DLT, 0 otherwise)
+# time.i = failure time
+
+
+weight.mat.fn - compute/update weight matrix for tite.pipe.design
+Arguments
+# times = start times and current time
+# dlt.tox = DLT outcomes
+# dlt.times = DLT times
+# weight.type = "weight.type" argument in tite.pipe.design ("uniform" or "adaptive")
+# Tmax = Maximum length of DLT window
+Values
+# df = matrix of dimension (n+1)-by-(n+1) giving weights of each patient in the trial at the start times of current and past patients
+
+
+weight.fn - compute weights for patients who are still being observed for DLT or have completed DLT follow-up
+Arguments
+# weight.type = "weight.type" argument in tite.pipe.design ("uniform" or "adaptive")
+# dlt.tox.i = DLT outcome for patient
+# dlt.times.i = DLT times for patient
+# times = current time
+# t.i0 = start time for patient
+# Tmax = Maximum length of DLT window
+# all.t.i0 = all start times (only used when weight.type = "adaptive")
+# all.fail.tox = all failure outcomes (only used when weight.type = "adaptive")
+# all.fail.times = all failure times (only used when weight.type = "adaptive")
+Values
+# weight = weight for patient
+
+
+weight.adaptive.fn - computes weight when using adaptive weight function
+Arguments
+# all.t.i0 = all start times
+# all.fail.tox = all failure outcomes
+# all.fail.times = all failure times
+# Tmax = Maximum length of DLT window
+# t.i0 = start time for patient
+# current.time = current time
+Values
+# Output is weight under adaptive weighting function 
+
+
+###################################
+# Functions for exploring results #
+###################################
+
+results.table.fn - Gives tables of operating characteristics
+Arguments
+# obj = tite.pipe.design object
+# exp.rec = operating characteristic table to give: "exp" for experimentation, "rec" for recommendation
+Values
+# tab = table of either experimentation or recommendation percentages and related output as shown in paper.
+
+
+early.stop.fn - Show how many trials stopped early for safety - used in results.table.fn
+Arguments
+# obj = tite.pipe.design object
+# nmax = N
+Values
+# Percentage of trials that stopped early
+
+
+trial.duration.fn - Function to show mean trial duration
+Arguments
+# obj = tite.pipe.design object
+Values
+# duration = average duration of all simulated trials
+
+
+print.tite.pipe.sim - print experimentation and recommendation percentages from simulations
+Arguments
+# x = Any object obtained from "tite.pipe.design"
+# pi = A matrix with rows denoting levels of drug A and columns denoting levels of drug B. Each element gives the true probability of the outcome (dose-limiting toxicity) for that dose combination. If omitted then the true probabilities of the outcome will be taken from that used when creating the x object.
+# cut.points = Cutpoints of toxicity for which the operating characteristics are to be categorised.
+# digits = The number of decimal places to print the operating characteristics
+# print = If TRUE then the experimentation and recommendation percentages are printed to the output
+Values
+# exp.table - for intervals defined by "cut.points", percentage of patients dosed at combinations with true DLT risk in each interval are shown
+# rec.table - for intervals defined by "cut.points", percentage of times combinations with true DLT risk in each interval are recommended as MTDCs shown
+
+
+plot.tite.pipe.sim - plot operating characteristics from simulations
+Arguments
+# x = Any object obtained from "tite.pipe.design"
+# pi = A matrix with rows denoting levels of drug A and columns denoting levels of drug B. Each element gives the true probability of the outcome (dose-limiting toxicity) for that dose combination. If omitted then the true probabilities of the outcome will be taken from that used when creating the x object.
+# theta = The target toxicity probability. If omitted then theta is taken from that used when creating the x object.
+# plot = The type of operating characteristics to plot for a series of simulated TITE-PIPE trials. Options are "exp" (experimentation percentages), "rec" (recommendation percentages), or "both" (both experimentation and recommendation percentages side-by-side). The default is "both".
+# ... = Further arguments passed to or from other methods
+Values
+# Output is heatmap of experimentation and/or recommendation proportions with green line indicating location of MTC
+
+
+#######
+# END #
+#######
